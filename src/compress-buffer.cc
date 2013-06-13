@@ -70,7 +70,7 @@ Handle<Value> compress(const Arguments& args) {
 	strmCompress.next_out=(Bytef*) bufferOut;
 	strmCompress.avail_out=bytesCompressed;
 	
-	if (deflate(&strmCompress, Z_FINISH) != Z_STREAM_END) {
+	if (deflate(&strmCompress, Z_FULL_FLUSH) < Z_OK) {
 		deflateReset(&strmCompress);
 		if (shouldFreeDataPointer) {
 			free(dataPointer); 
@@ -78,7 +78,7 @@ Handle<Value> compress(const Arguments& args) {
 		}
 		return Undefined();
 	}
-	
+	deflate(&strmCompress, Z_FINISH);
 	bytesCompressed=strmCompress.total_out;
 	deflateReset(&strmCompress);
 	

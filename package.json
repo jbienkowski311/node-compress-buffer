@@ -1,5 +1,5 @@
 {
-  "name": "compress-buffer",
+  "name": "compress-buffer-crc32",
   "description": "Synchronous Buffer compression library for Node.js",
 	"homepage" : "http://egorfine.github.com/node-compress-buffer",
 	"bugs" : { "url" : "http://github.com/egorFiNE/node-compress-buffer/issues" },
