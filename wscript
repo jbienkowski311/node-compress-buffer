@@ -16,7 +16,7 @@ def configure(conf):
 
   conf.env.DEFINES = []
   conf.env.USELIB = []
-  conf.env.CXXFLAGS = ['-O3']
+  conf.env.CXXFLAGS = ['-g']
   conf.env.LDFLAGS = ['-lz']
 
 
