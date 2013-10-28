@@ -38,30 +38,30 @@ static Persistent<String> SYM_HEADER;
 static Persistent<String> SYM_ODD;
 
 static Handle<Value> ThrowNodeError (const char* what = NULL) {
-	return ThrowException(Exception::Error(String::New(what)));
+    return ThrowException(Exception::Error(String::New(what)));
 }
 
 static int meta_uncompress (char *dataIn, size_t bytesIn, int *dataType) {
-	z_stream strmUncompress;
+    z_stream strmUncompress;
 
-	strmUncompress.zalloc = Z_NULL;
-	strmUncompress.zfree = Z_NULL;
-	strmUncompress.opaque = Z_NULL;
-	strmUncompress.avail_in = 0;
-	strmUncompress.next_in = Z_NULL;
+    strmUncompress.zalloc = Z_NULL;
+    strmUncompress.zfree = Z_NULL;
+    strmUncompress.opaque = Z_NULL;
+    strmUncompress.avail_in = 0;
+    strmUncompress.next_in = Z_NULL;
 
     //this can be further improved!
     //we should only do inflate if the the stream is compressed
     //and header skip should be done earlier
-	if (inflateInit2(&strmUncompress, WBITS_RAW) != Z_OK) {
-		return -1;
-	}
+    if (inflateInit2(&strmUncompress, WBITS_RAW) != Z_OK) {
+        return -1;
+    }
 
     unsigned char *tmp = (unsigned char *) malloc(CHUNK);
 
     //skipping header
-	strmUncompress.next_in = ((unsigned char *) dataIn) + HEADER_SIZE;
-	strmUncompress.avail_in = bytesIn - HEADER_SIZE;
+    strmUncompress.next_in = ((unsigned char *) dataIn) + HEADER_SIZE;
+    strmUncompress.avail_in = bytesIn - HEADER_SIZE;
 
     //checking if stream is compressed, first byte - binary:
     //xxxxx001 - stream is NOT compressed
@@ -98,68 +98,68 @@ static int meta_uncompress (char *dataIn, size_t bytesIn, int *dataType) {
         *dataType = 128;
     }
 
-	inflateEnd(&strmUncompress);
+    inflateEnd(&strmUncompress);
 
     return 0;
 
 }
 
 static int compress (char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
-	size_t bytesDeflated = 0;
+    size_t bytesDeflated = 0;
 
     if (compressionLevel < 0 || compressionLevel > 9) {
         compressionLevel = Z_DEFAULT_COMPRESSION;
     }
 
     z_stream strmCompress;
-	strmCompress.zalloc = Z_NULL;
-	strmCompress.zfree = Z_NULL;
-	strmCompress.opaque = Z_NULL;
+    strmCompress.zalloc = Z_NULL;
+    strmCompress.zfree = Z_NULL;
+    strmCompress.opaque = Z_NULL;
 
-	if (deflateInit2(&strmCompress, compressionLevel, Z_DEFLATED, WBITS, 8L, Z_DEFAULT_STRATEGY) != Z_OK) {
-		return -1;
-	}
+    if (deflateInit2(&strmCompress, compressionLevel, Z_DEFLATED, WBITS, 8L, Z_DEFAULT_STRATEGY) != Z_OK) {
+        return -1;
+    }
 
-	bytesDeflated = deflateBound(&strmCompress, bytesIn);
+    bytesDeflated = deflateBound(&strmCompress, bytesIn);
 
-	if (bytesDeflated < 1024) {
-		bytesDeflated = 1024;
-	}
+    if (bytesDeflated < 1024) {
+        bytesDeflated = 1024;
+    }
 
-	*dataOut = (char *) malloc(bytesDeflated);
+    *dataOut = (char *) malloc(bytesDeflated);
 
-	strmCompress.next_in = (Bytef *) dataIn;
-	strmCompress.avail_in = bytesIn;
-	strmCompress.next_out = (Bytef *) *dataOut;
-	strmCompress.avail_out = bytesDeflated;
+    strmCompress.next_in = (Bytef *) dataIn;
+    strmCompress.avail_in = bytesIn;
+    strmCompress.next_out = (Bytef *) *dataOut;
+    strmCompress.avail_out = bytesDeflated;
 
-	if (deflate(&strmCompress, Z_NO_FLUSH) < Z_OK) {
-		deflateReset(&strmCompress);
-		return -2;
-	}
+    if (deflate(&strmCompress, Z_NO_FLUSH) < Z_OK) {
+        deflateReset(&strmCompress);
+        return -2;
+    }
 
-	deflate(&strmCompress, Z_FINISH);
+    deflate(&strmCompress, Z_FINISH);
 
-	*bytesOut = strmCompress.total_out;
+    *bytesOut = strmCompress.total_out;
 
-	deflateReset(&strmCompress);
+    deflateReset(&strmCompress);
 
     return 0;
 }
 
 static Handle<Value> onet_compress (const Arguments &args) {
-	HandleScope scope;
+    HandleScope scope;
 
     int compressionLevel = Z_DEFAULT_COMPRESSION;
 
-	if (args.Length() < 1) {
-		return Undefined();
-	}
+    if (args.Length() < 1) {
+        return Undefined();
+    }
 
-	if (!Buffer::HasInstance(args[0])) {
-		ThrowNodeError("First argument must be a Buffer");
-		return Undefined();
-	}
+    if (!Buffer::HasInstance(args[0])) {
+        ThrowNodeError("First argument must be a Buffer");
+        return Undefined();
+    }
 
     Local<Object> bufferIn = args[0]->ToObject();
 
@@ -215,22 +215,22 @@ static Handle<Value> onet_compress (const Arguments &args) {
 
     free(dataOut);
 
-	return scope.Close(result);
+    return scope.Close(result);
 }
 
 static Handle<Value> compress (const Arguments& args) {
-	HandleScope scope;
+    HandleScope scope;
 
     int compressionLevel = Z_DEFAULT_COMPRESSION;
 
-	if (args.Length() < 1) {
-		return Undefined();
-	}
+    if (args.Length() < 1) {
+        return Undefined();
+    }
 
-	if (!Buffer::HasInstance(args[0])) {
-		ThrowNodeError("First argument must be a Buffer");
-		return Undefined();
-	}
+    if (!Buffer::HasInstance(args[0])) {
+        ThrowNodeError("First argument must be a Buffer");
+        return Undefined();
+    }
 
     Local<Object> bufferIn = args[0]->ToObject();
 
@@ -427,11 +427,11 @@ extern "C" void init (Handle<Object> target) {
 
     target->Set(SYM_BUFFERS, buffers);
 
-	NODE_SET_METHOD(target, "compress", compress);
-	NODE_SET_METHOD(target, "uncompress", uncompress);
+    NODE_SET_METHOD(target, "compress", compress);
+    NODE_SET_METHOD(target, "uncompress", uncompress);
     NODE_SET_METHOD(target, "metaCompress", onet_compress);
-	NODE_SET_METHOD(target, "getCrc", getCrc);
-	NODE_SET_METHOD(target, "estimate", estimate);
+    NODE_SET_METHOD(target, "getCrc", getCrc);
+    NODE_SET_METHOD(target, "estimate", estimate);
 
 }
 
