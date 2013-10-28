@@ -36,41 +36,39 @@ static Persistent<String> SYM_META;
 static Persistent<String> SYM_BUFFERS;
 static Persistent<String> SYM_HEADER;
 static Persistent<String> SYM_ODD;
+unsigned char *tmpBody;
 
 static Handle<Value> ThrowNodeError (const char* what = NULL) {
     return ThrowException(Exception::Error(String::New(what)));
 }
 
 static int meta_uncompress (char *dataIn, size_t bytesIn, int *dataType) {
-    z_stream strmUncompress;
-
-    strmUncompress.zalloc = Z_NULL;
-    strmUncompress.zfree = Z_NULL;
-    strmUncompress.opaque = Z_NULL;
-    strmUncompress.avail_in = 0;
-    strmUncompress.next_in = Z_NULL;
-
-    //this can be further improved!
-    //we should only do inflate if the the stream is compressed
-    //and header skip should be done earlier
-    if (inflateInit2(&strmUncompress, WBITS_RAW) != Z_OK) {
-        return -1;
-    }
-
-    unsigned char *tmp = (unsigned char *) malloc(CHUNK);
-
-    //skipping header
-    strmUncompress.next_in = ((unsigned char *) dataIn) + HEADER_SIZE;
-    strmUncompress.avail_in = bytesIn - HEADER_SIZE;
+    unsigned char *bodyDataIn = ((unsigned char *) dataIn) + HEADER_SIZE;
 
     //checking if stream is compressed, first byte - binary:
     //xxxxx001 - stream is NOT compressed
     //xxxxx011 - stream is compressed (using fixed huffman codes)
     //xxxxx111 - stream is compressed (using dynamic huffman codes)
-    if ((*strmUncompress.next_in & 3) == 3 || (*strmUncompress.next_in & 5) == 5) {
+    if ((*bodyDataIn & 3) == 3 || (*bodyDataIn & 5) == 5) {
+        z_stream strmUncompress;
+
+        strmUncompress.zalloc = Z_NULL;
+        strmUncompress.zfree = Z_NULL;
+        strmUncompress.opaque = Z_NULL;
+        strmUncompress.avail_in = 0;
+        strmUncompress.next_in = Z_NULL;
+
+        if (inflateInit2(&strmUncompress, WBITS_RAW) != Z_OK) {
+            return -1;
+        }
+
+        //skipping header
+        strmUncompress.next_in = bodyDataIn;
+        strmUncompress.avail_in = bytesIn - HEADER_SIZE;
+
         for (;;) {
             strmUncompress.avail_out = CHUNK;
-            strmUncompress.next_out = tmp;
+            strmUncompress.next_out = tmpBody;
 
             int ret = inflate(&strmUncompress, Z_BLOCK);
 
@@ -82,10 +80,6 @@ static int meta_uncompress (char *dataIn, size_t bytesIn, int *dataType) {
                 case Z_DATA_ERROR:
                 case Z_MEM_ERROR:
                     inflateEnd(&strmUncompress);
-                    if (tmp != NULL) {
-                        free(tmp);
-                    }
-
                     return -2;
             }
 
@@ -94,11 +88,11 @@ static int meta_uncompress (char *dataIn, size_t bytesIn, int *dataType) {
             }
         }
         *dataType = strmUncompress.data_type;
+
+        inflateEnd(&strmUncompress);
     } else {
         *dataType = 128;
     }
-
-    inflateEnd(&strmUncompress);
 
     return 0;
 
@@ -414,6 +408,7 @@ extern "C" void init (Handle<Object> target) {
     SYM_BUFFERS = NODE_PSYMBOL("buffers");
     SYM_HEADER = NODE_PSYMBOL("header");
     SYM_ODD = NODE_PSYMBOL("odd");
+    tmpBody = (unsigned char *) malloc(CHUNK);
 
     char header[] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff};
     Buffer *headerBuffer = Buffer::New(header, 10);
