@@ -12,11 +12,12 @@
 
 // zlib magic something
 #define WBITS 16+MAX_WBITS
-//#define WBITS -15
+#define WBITS_RAW -15
 
 #define CHUNK 1024*100
 #define HEADER_SIZE 10
 #define FOOTER_SIZE 8
+#define SPACER_SIZE 6
 
 
 using namespace v8;
@@ -49,21 +50,24 @@ static int meta_uncompress(char *dataIn, size_t bytesIn, int *dataType) {
 	strmUncompress.avail_in = 0;
 	strmUncompress.next_in = Z_NULL;
 
-	if (inflateInit2(&strmUncompress, -15) != Z_OK) {
-		ThrowNodeError("zlib initialization error.");
+    //this can be further improved!
+    //we should only do inflate if the the stream is compressed
+    //and header skip should be done earlier
+	if (inflateInit2(&strmUncompress, WBITS_RAW) != Z_OK) {
 		return -1;
 	}
 	
     unsigned char *tmp = (unsigned char *) malloc(CHUNK);
 
-    //pomijam naglowek
+    //skipping header
 	strmUncompress.next_in = ((unsigned char *) dataIn) + HEADER_SIZE;
 	strmUncompress.avail_in = bytesIn - HEADER_SIZE;
 
-    //sprawdzam czy blok jest skompresowany
-    if ((*strmUncompress.next_in & 3) == 1) {
-        *dataType = 128;
-    } else {
+    //checking if stream is compressed, first byte - binary:
+    //xxxxx001 - stream is NOT compressed
+    //xxxxx011 - stream is compressed (using fixed huffman codes)
+    //xxxxx111 - stream is compressed (using dynamic huffman codes)
+    if ((*strmUncompress.next_in & 3) == 3 || (*strmUncompress.next_in & 5) == 5) {
         for (;;) {
             strmUncompress.avail_out = CHUNK;
             strmUncompress.next_out = tmp;
@@ -89,32 +93,24 @@ static int meta_uncompress(char *dataIn, size_t bytesIn, int *dataType) {
                 break;
             }
         }
+        *dataType = strmUncompress.data_type;
+    } else {
+        *dataType = 128;
     }
 
 	inflateEnd(&strmUncompress);
 
-    *dataType = strmUncompress.data_type;
 
     return 0;
 
 }
 
 static int compress(char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
-	size_t bytesCompressed = 0;
+	size_t bytesDeflated = 0;
 
     if (compressionLevel < 0 || compressionLevel > 9) {
         compressionLevel = Z_DEFAULT_COMPRESSION;
     }
-
-//	deflateParams(&strmCompress, compressionLevel, Z_DEFAULT_STRATEGY);
-
-	bytesCompressed = compressBound(bytesIn);
-
-	// compressBound mistakes when estimating extremely small data blocks (like few bytes), so
-	// here is the stub. Otherwise smaller buffers (like 10 bytes) would not compress.
-	if (bytesCompressed < 1024) {
-		bytesCompressed = 1024;
-	}
 
     z_stream strmCompress;
 	strmCompress.zalloc = Z_NULL;
@@ -122,21 +118,27 @@ static int compress(char *dataIn, size_t bytesIn, int compressionLevel, char **d
 	strmCompress.opaque = Z_NULL;
 
 	if (deflateInit2(&strmCompress, compressionLevel, Z_DEFLATED, WBITS, 8L, Z_DEFAULT_STRATEGY) != Z_OK) {
-		ThrowNodeError("zlib initialization error.");
 		return -1;
 	}
 
-	*dataOut = (char *) malloc(bytesCompressed);
+	bytesDeflated = deflateBound(&strmCompress, bytesIn);
+
+	if (bytesDeflated < 1024) {
+		bytesDeflated = 1024;
+	}
+
+	*dataOut = (char *) malloc(bytesDeflated);
 
 	strmCompress.next_in = (Bytef *) dataIn;
 	strmCompress.avail_in = bytesIn;
 	strmCompress.next_out = (Bytef *) *dataOut;
-	strmCompress.avail_out = bytesCompressed;
+	strmCompress.avail_out = bytesDeflated;
 
 	if (deflate(&strmCompress, Z_NO_FLUSH) < Z_OK) {
 		deflateReset(&strmCompress);
 		return -2;
 	}
+
 	deflate(&strmCompress, Z_FINISH);
 
 	*bytesOut = strmCompress.total_out;
@@ -174,14 +176,18 @@ static Handle<Value> onet_compress(const Arguments &args) {
     int status = compress(dataIn, bytesIn, compressionLevel, &dataOut, &bytesOut);
 
     if (status != 0) {
-        ThrowNodeError("Unable to compress");
+        char msg[30];
+        sprintf(msg, "Unable to compress: %d", status);
+        ThrowNodeError(msg);
         return Undefined();
     }
 
     status = meta_uncompress(dataOut, bytesOut, &dataType);
 
     if (status != 0) {
-        ThrowNodeError("Unable to uncompress");
+        char msg[30];
+        sprintf(msg, "Unable to uncompress: %d", status);
+        ThrowNodeError(msg);
         return Undefined();
     }
 
@@ -249,6 +255,24 @@ static Handle<Value> compress(const Arguments& args) {
     return scope.Close(buff->handle_);
 }
 
+static Handle<Value> estimate(const Arguments &args) {
+    HandleScope scope;
+
+    Local<Array> arr = Local<Array>::Cast(args[0]);
+    int i = 0;
+    int l = arr->Length();
+    int sum = HEADER_SIZE + FOOTER_SIZE + ((l - 1) * SPACER_SIZE);
+
+    for(; i < l; i++) {
+        Local<Object> obj = arr->Get(i)->ToObject();
+        Local<Object> meta = obj->Get(SYM_META)->ToObject();
+
+        sum += meta->Get(SYM_RAW_LENGTH)->Uint32Value();
+    }
+
+    return scope.Close(Integer::New(sum));
+}
+
 static unsigned long reverseBytes (unsigned char *buf) {
     unsigned long v;
 
@@ -291,7 +315,7 @@ static Handle<Value> getCrc (const Arguments &args) {
     return scope.Close(data);
 }
 
-static Handle<Value> uncompress3(const Arguments &args) {
+static Handle<Value> uncompress (const Arguments &args) {
     if (args.Length() < 1) {
         return Undefined();
     }
@@ -404,10 +428,11 @@ extern "C" void init (Handle<Object> target) {
     target->Set(SYM_BUFFERS, buffers);
 
 	NODE_SET_METHOD(target, "compress", compress);
-    NODE_SET_METHOD(target, "onet_compress", onet_compress);
-//	NODE_SET_METHOD(target, "uncompress", uncompress);
-	NODE_SET_METHOD(target, "uncompress3", uncompress3);
+	NODE_SET_METHOD(target, "uncompress", uncompress);
+    NODE_SET_METHOD(target, "metaCompress", onet_compress);
 	NODE_SET_METHOD(target, "getCrc", getCrc);
+	NODE_SET_METHOD(target, "estimate", estimate);
+
 }
 
 NODE_MODULE(compress_buffer_bindings, init);
