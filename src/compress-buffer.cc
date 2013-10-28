@@ -37,13 +37,13 @@ static Persistent<String> SYM_BUFFERS;
 static Persistent<String> SYM_HEADER;
 static Persistent<String> SYM_ODD;
 
-static Handle<Value> ThrowNodeError(const char* what = NULL) {
+static Handle<Value> ThrowNodeError (const char* what = NULL) {
 	return ThrowException(Exception::Error(String::New(what)));
 }
 
-static int meta_uncompress(char *dataIn, size_t bytesIn, int *dataType) {
+static int meta_uncompress (char *dataIn, size_t bytesIn, int *dataType) {
 	z_stream strmUncompress;
-	
+
 	strmUncompress.zalloc = Z_NULL;
 	strmUncompress.zfree = Z_NULL;
 	strmUncompress.opaque = Z_NULL;
@@ -56,7 +56,7 @@ static int meta_uncompress(char *dataIn, size_t bytesIn, int *dataType) {
 	if (inflateInit2(&strmUncompress, WBITS_RAW) != Z_OK) {
 		return -1;
 	}
-	
+
     unsigned char *tmp = (unsigned char *) malloc(CHUNK);
 
     //skipping header
@@ -100,12 +100,11 @@ static int meta_uncompress(char *dataIn, size_t bytesIn, int *dataType) {
 
 	inflateEnd(&strmUncompress);
 
-
     return 0;
 
 }
 
-static int compress(char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
+static int compress (char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
 	size_t bytesDeflated = 0;
 
     if (compressionLevel < 0 || compressionLevel > 9) {
@@ -148,7 +147,7 @@ static int compress(char *dataIn, size_t bytesIn, int compressionLevel, char **d
     return 0;
 }
 
-static Handle<Value> onet_compress(const Arguments &args) {
+static Handle<Value> onet_compress (const Arguments &args) {
 	HandleScope scope;
 
     int compressionLevel = Z_DEFAULT_COMPRESSION;
@@ -219,7 +218,7 @@ static Handle<Value> onet_compress(const Arguments &args) {
 	return scope.Close(result);
 }
 
-static Handle<Value> compress(const Arguments& args) {
+static Handle<Value> compress (const Arguments& args) {
 	HandleScope scope;
 
     int compressionLevel = Z_DEFAULT_COMPRESSION;
@@ -227,7 +226,7 @@ static Handle<Value> compress(const Arguments& args) {
 	if (args.Length() < 1) {
 		return Undefined();
 	}
-	
+
 	if (!Buffer::HasInstance(args[0])) {
 		ThrowNodeError("First argument must be a Buffer");
 		return Undefined();
@@ -255,7 +254,7 @@ static Handle<Value> compress(const Arguments& args) {
     return scope.Close(buff->handle_);
 }
 
-static Handle<Value> estimate(const Arguments &args) {
+static Handle<Value> estimate (const Arguments &args) {
     HandleScope scope;
 
     Local<Array> arr = Local<Array>::Cast(args[0]);
@@ -316,15 +315,17 @@ static Handle<Value> getCrc (const Arguments &args) {
 }
 
 static Handle<Value> uncompress (const Arguments &args) {
+    HandleScope scope;
+
     if (args.Length() < 1) {
         return Undefined();
     }
-    
+
     if (!Buffer::HasInstance(args[0])) {
         ThrowNodeError("First argument must be a Buffer");
         return Undefined();
     }
-    
+
     z_stream strmUncompress;
     
     strmUncompress.zalloc=Z_NULL;
@@ -396,7 +397,6 @@ static Handle<Value> uncompress (const Arguments &args) {
     Buffer *BufferOut=Buffer::New((char *)bufferOut, malloc_size);
     free(bufferOut);
 
-    HandleScope scope;
     return scope.Close(BufferOut->handle_);
 }
 
