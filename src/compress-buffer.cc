@@ -292,7 +292,15 @@ static Handle<Value> getCrc (const Arguments &args) {
         Local<Object> obj = arr->Get(i)->ToObject();
         Local<Object> meta = obj->Get(SYM_META)->ToObject();
 
-        Local<Object> bufCrc = meta->Get(SYM_CRC)->ToObject();
+        Local<Value> objCrc = meta->Get(SYM_CRC);
+        if (!Buffer::HasInstance(objCrc)) {
+            char msg[40];
+            sprintf(msg, "CRC32 is not a buffer at: %d", i);
+            ThrowNodeError(msg);
+            return Undefined();
+        }
+
+        Local<Object> bufCrc = objCrc->ToObject();
 
         unsigned long tmpCrc = reverseBytes((unsigned char *) Buffer::Data(bufCrc));
         unsigned long tmpLen = meta->Get(SYM_LENGTH)->Uint32Value();
