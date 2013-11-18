@@ -128,7 +128,7 @@ static int compress (char *dataIn, size_t bytesIn, int compressionLevel, char **
     strmCompress.avail_out = bytesDeflated;
 
     if (deflate(&strmCompress, Z_NO_FLUSH) < Z_OK) {
-        deflateReset(&strmCompress);
+        deflateEnd(&strmCompress);
         return -2;
     }
 
@@ -136,7 +136,7 @@ static int compress (char *dataIn, size_t bytesIn, int compressionLevel, char **
 
     *bytesOut = strmCompress.total_out;
 
-    deflateReset(&strmCompress);
+    deflateEnd(&strmCompress);
 
     return 0;
 }
@@ -169,6 +169,10 @@ static Handle<Value> onet_compress (const Arguments &args) {
     int status = compress(dataIn, bytesIn, compressionLevel, &dataOut, &bytesOut);
 
     if (status != 0) {
+        if (dataOut) {
+            free(dataOut);
+        }
+
         char msg[30];
         sprintf(msg, "Unable to compress: %d", status);
         ThrowNodeError(msg);
@@ -239,6 +243,9 @@ static Handle<Value> compress (const Arguments& args) {
     int status = compress(dataIn, bytesIn, compressionLevel, &dataOut, &bytesOut);
 
     if (status != 0) {
+        if (dataOut) {
+            free(dataOut);
+        }
         ThrowNodeError("Unable to compress");
         return Undefined();
     }
