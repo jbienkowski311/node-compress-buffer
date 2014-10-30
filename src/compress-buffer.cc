@@ -24,9 +24,10 @@ using namespace v8;
 using namespace node;
 
 static Persistent<String> SYM_BODY;
+static Persistent<String> SYM_BOUNDARY;
 static Persistent<String> SYM_LEFT;
 static Persistent<String> SYM_RIGHT;
-static Persistent<String> SYM_LAST;
+static Persistent<String> SYM_LAST_BLOCK;
 static Persistent<String> SYM_TYPE;
 static Persistent<String> SYM_OFFSETS;
 static Persistent<String> SYM_LENGTH;
@@ -42,60 +43,121 @@ static Handle<Value> ThrowNodeError (const char* what = NULL) {
     return ThrowException(Exception::Error(String::New(what)));
 }
 
-static int meta_uncompress (char *dataIn, size_t bytesIn, int *dataType) {
-    unsigned char *bodyDataIn = ((unsigned char *) dataIn) + HEADER_SIZE;
+static int meta_uncompress (char **dataIn, size_t bytesIn, char **dataBoundary, size_t *bytesBoundary, int *lastBlockPosition) {
+    int last;
+    int pos;
 
-    //checking if stream is compressed, first byte - binary:
-    //xxxxx001 - stream is NOT compressed
-    //xxxxx011 - stream is compressed (using fixed huffman codes)
-    //xxxxx111 - stream is compressed (using dynamic huffman codes)
-    if ((*bodyDataIn & 3) == 3 || (*bodyDataIn & 5) == 5) {
-        z_stream strmUncompress;
+    z_stream strmUncompress;
 
-        strmUncompress.zalloc = Z_NULL;
-        strmUncompress.zfree = Z_NULL;
-        strmUncompress.opaque = Z_NULL;
-        strmUncompress.avail_in = 0;
-        strmUncompress.next_in = Z_NULL;
+    strmUncompress.zalloc = Z_NULL;
+    strmUncompress.zfree = Z_NULL;
+    strmUncompress.opaque = Z_NULL;
+    strmUncompress.avail_in = 0;
+    strmUncompress.next_in = Z_NULL;
 
-        if (inflateInit2(&strmUncompress, WBITS_RAW) != Z_OK) {
-            return -1;
-        }
-
-        //skipping header
-        strmUncompress.next_in = bodyDataIn;
-        strmUncompress.avail_in = bytesIn - HEADER_SIZE;
-
-        for (;;) {
-            strmUncompress.avail_out = CHUNK;
-            strmUncompress.next_out = tmpBody;
-
-            int ret = inflate(&strmUncompress, Z_BLOCK);
-
-            assert(ret != Z_STREAM_ERROR); 
-
-            switch (ret) {
-                case Z_NEED_DICT:
-                    ret = Z_DATA_ERROR;     /* and fall through */
-                case Z_DATA_ERROR:
-                case Z_MEM_ERROR:
-                    inflateEnd(&strmUncompress);
-                    return -2;
-            }
-
-            if (strmUncompress.data_type & 128) {
-                break;
-            }
-        }
-        *dataType = strmUncompress.data_type;
-
-        inflateEnd(&strmUncompress);
-    } else {
-        *dataType = 128;
+    if (inflateInit2(&strmUncompress, WBITS_RAW) != Z_OK) {
+        return -1;
     }
 
-    return 0;
+    //skipping header
+    unsigned char *bodyDataIn = ((unsigned char *) *dataIn) + HEADER_SIZE;
 
+    strmUncompress.next_in = bodyDataIn;
+    strmUncompress.avail_in = bytesIn - HEADER_SIZE;
+
+    //is there only one block in the stream?
+    last = bodyDataIn[0] & 1;
+    if (last) {
+        *(*dataIn + (bytesIn - strmUncompress.avail_in)) &= ~1;
+        *lastBlockPosition = bytesIn - strmUncompress.avail_in;
+    }
+
+    for (;;) {
+        strmUncompress.avail_out = CHUNK;
+        strmUncompress.next_out = tmpBody;
+
+        int ret = inflate(&strmUncompress, Z_BLOCK);
+
+        assert(ret != Z_STREAM_ERROR); 
+
+        switch (ret) {
+            case Z_NEED_DICT:
+                ret = Z_DATA_ERROR;     /* and fall through */
+            case Z_DATA_ERROR:
+            case Z_MEM_ERROR:
+                inflateEnd(&strmUncompress);
+                return -2;
+        }
+
+        if (strmUncompress.data_type & 128) {
+            if (last) {
+                break;
+            }
+
+            pos = strmUncompress.data_type & 7;
+
+            if (pos != 0) {
+                pos = 0x100 >> pos;
+
+                last = strmUncompress.next_in[-1] & pos;
+                if (last) {
+                    *lastBlockPosition = bytesIn - strmUncompress.avail_in - 1;
+                    *(*dataIn + *lastBlockPosition) &= ~pos;
+                }
+            } else {
+                last = strmUncompress.next_in[0] & 1;
+                if (last) {
+                    *lastBlockPosition = bytesIn - strmUncompress.avail_in;
+                    *(*dataIn + *lastBlockPosition) &= ~1;
+                }
+            }
+        }
+    }
+
+    last = strmUncompress.next_in[-1];
+    pos = strmUncompress.data_type & 7;
+
+    if (pos == 0) {
+        *(*dataBoundary + *bytesBoundary) = last;
+        (*bytesBoundary)++;
+    } else {
+        last &= ((0x100 >> pos) - 1);
+
+        if (pos & 1) {
+            *(*dataBoundary + *bytesBoundary) = last;
+            (*bytesBoundary)++;
+
+            if (pos == 1) {
+                *(*dataBoundary + *bytesBoundary) = 0x00;
+                (*bytesBoundary)++;
+            }
+
+            memcpy((*dataBoundary + *bytesBoundary), "\0\0\xff\xff", 4);
+            *bytesBoundary += 4;
+        } else {
+            switch (pos) {
+                case 6:
+                    *(*dataBoundary + *bytesBoundary) = last | 0x08;
+                    (*bytesBoundary)++;
+                    last = 0;
+                case 4:
+                    *(*dataBoundary + *bytesBoundary) = last | 0x20;
+                    (*bytesBoundary)++;
+                    last = 0;
+                case 2:
+                    *(*dataBoundary + *bytesBoundary) = last | 0x80;
+                    (*bytesBoundary)++;
+                    *(*dataBoundary + *bytesBoundary) = 0x00;
+                    (*bytesBoundary)++;
+            }
+        }
+    }
+
+    *lastBlockPosition = *lastBlockPosition - HEADER_SIZE;
+
+    inflateEnd(&strmUncompress);
+
+    return 0;
 }
 
 static int compress (char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
@@ -164,8 +226,11 @@ static Handle<Value> onet_compress (const Arguments &args) {
     char *dataIn = Buffer::Data(bufferIn);
     size_t bytesIn = Buffer::Length(bufferIn);
     char *dataOut = 0;
+    char *dataBoundary = (char *) malloc(SPACER_SIZE);
     size_t bytesOut = 0;
-    int dataType = 0;
+    size_t bytesBoundary = 0;
+    int lastBlockPosition = 0;
+
     int status = compress(dataIn, bytesIn, compressionLevel, &dataOut, &bytesOut);
 
     if (status != 0) {
@@ -179,7 +244,7 @@ static Handle<Value> onet_compress (const Arguments &args) {
         return Undefined();
     }
 
-    status = meta_uncompress(dataOut, bytesOut, &dataType);
+    status = meta_uncompress(&dataOut, bytesOut, &dataBoundary, &bytesBoundary, &lastBlockPosition);
 
     if (status != 0) {
         char msg[30];
@@ -195,15 +260,17 @@ static Handle<Value> onet_compress (const Arguments &args) {
     Buffer *body = Buffer::New((char *) dataOut, bytesOut);
     result->Set(SYM_BODY, body->handle_);
 
+    Buffer *boundary = Buffer::New((char *) dataBoundary, bytesBoundary);
+    result->Set(SYM_BOUNDARY, boundary->handle_);
+
     Local<Object> dataOffsets = Object::New();
     dataOffsets->Set(SYM_LEFT, Integer::New(HEADER_SIZE));
     dataOffsets->Set(SYM_RIGHT, Integer::New(HEADER_SIZE + dataLength));
-    dataOffsets->Set(SYM_LAST, Integer::New(HEADER_SIZE + dataLength));
+    dataOffsets->Set(SYM_LAST_BLOCK, Integer::New(lastBlockPosition));
 
     Buffer *crc = Buffer::New((char *) dataOut + (bytesOut - FOOTER_SIZE), 4);
 
     Local<Object> meta = Object::New();
-    meta->Set(SYM_TYPE, Integer::New(dataType));
     meta->Set(SYM_OFFSETS, dataOffsets);
     meta->Set(SYM_LENGTH, Integer::New(bytesIn));
     meta->Set(SYM_RAW_LENGTH, Integer::New(bytesOut - HEADER_SIZE - FOOTER_SIZE));
@@ -212,6 +279,7 @@ static Handle<Value> onet_compress (const Arguments &args) {
     result->Set(SYM_META, meta);
 
     free(dataOut);
+    free(dataBoundary);
 
     return scope.Close(result);
 }
@@ -411,9 +479,11 @@ static Handle<Value> uncompress (const Arguments &args) {
 
 extern "C" void init (Handle<Object> target) {
     SYM_BODY = NODE_PSYMBOL("body");
+    SYM_RAW_BODY = NODE_PSYMBOL("rawBody");
+    SYM_BOUNDARY = NODE_PSYMBOL("boundary");
     SYM_LEFT = NODE_PSYMBOL("left");
     SYM_RIGHT = NODE_PSYMBOL("right");
-    SYM_LAST = NODE_PSYMBOL("last");
+    SYM_LAST_BLOCK = NODE_PSYMBOL("lastBlock");
     SYM_TYPE = NODE_PSYMBOL("type");
     SYM_OFFSETS = NODE_PSYMBOL("offsets");
     SYM_LENGTH = NODE_PSYMBOL("length");
