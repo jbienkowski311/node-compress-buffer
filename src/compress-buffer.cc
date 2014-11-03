@@ -477,7 +477,6 @@ static Handle<Value> uncompress (const Arguments &args) {
 
 extern "C" void init (Handle<Object> target) {
     SYM_BODY = NODE_PSYMBOL("body");
-    SYM_RAW_BODY = NODE_PSYMBOL("rawBody");
     SYM_BOUNDARY = NODE_PSYMBOL("boundary");
     SYM_LEFT = NODE_PSYMBOL("left");
     SYM_RIGHT = NODE_PSYMBOL("right");
