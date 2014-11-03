@@ -60,13 +60,11 @@ static int meta_uncompress (char **dataIn, size_t bytesIn, char **dataBoundary, 
     }
 
     //skipping header
-    unsigned char *bodyDataIn = ((unsigned char *) *dataIn) + HEADER_SIZE;
-
-    strmUncompress.next_in = bodyDataIn;
+    strmUncompress.next_in = ((unsigned char *) *dataIn) + HEADER_SIZE;
     strmUncompress.avail_in = bytesIn - HEADER_SIZE;
 
     //is there only one block in the stream?
-    last = bodyDataIn[0] & 1;
+    last = strmUncompress.next_in[0] & 1;
     if (last) {
         *(*dataIn + (bytesIn - strmUncompress.avail_in)) &= ~1;
         *lastBlockPosition = bytesIn - strmUncompress.avail_in;
