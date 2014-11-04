@@ -28,6 +28,7 @@ static Persistent<String> SYM_BOUNDARY;
 static Persistent<String> SYM_LEFT;
 static Persistent<String> SYM_RIGHT;
 static Persistent<String> SYM_LAST_BLOCK;
+static Persistent<String> SYM_LAST_VALUE;
 static Persistent<String> SYM_TYPE;
 static Persistent<String> SYM_OFFSETS;
 static Persistent<String> SYM_LENGTH;
@@ -36,14 +37,13 @@ static Persistent<String> SYM_CRC;
 static Persistent<String> SYM_META;
 static Persistent<String> SYM_BUFFERS;
 static Persistent<String> SYM_HEADER;
-static Persistent<String> SYM_ODD;
 unsigned char *tmpBody;
 
 static Handle<Value> ThrowNodeError (const char* what = NULL) {
     return ThrowException(Exception::Error(String::New(what)));
 }
 
-static int meta_uncompress (char **dataIn, size_t bytesIn, char **dataBoundary, size_t *bytesBoundary, int *lastBlockPosition) {
+static int meta_uncompress (char **dataIn, size_t bytesIn, char **dataBoundary, size_t *bytesBoundary, int *lastBlockPosition, int *lastBlockValue) {
     int last;
     int pos;
 
@@ -66,8 +66,8 @@ static int meta_uncompress (char **dataIn, size_t bytesIn, char **dataBoundary, 
     //is there only one block in the stream?
     last = strmUncompress.next_in[0] & 1;
     if (last) {
-        *(*dataIn + (bytesIn - strmUncompress.avail_in)) &= ~1;
         *lastBlockPosition = bytesIn - strmUncompress.avail_in;
+        *lastBlockValue = 1;
     }
 
     for (;;) {
@@ -100,13 +100,13 @@ static int meta_uncompress (char **dataIn, size_t bytesIn, char **dataBoundary, 
                 last = strmUncompress.next_in[-1] & pos;
                 if (last) {
                     *lastBlockPosition = bytesIn - strmUncompress.avail_in - 1;
-                    *(*dataIn + *lastBlockPosition) &= ~pos;
+                    *lastBlockValue = pos;
                 }
             } else {
                 last = strmUncompress.next_in[0] & 1;
                 if (last) {
                     *lastBlockPosition = bytesIn - strmUncompress.avail_in;
-                    *(*dataIn + *lastBlockPosition) &= ~1;
+                    *lastBlockValue = 1;
                 }
             }
         }
@@ -228,6 +228,7 @@ static Handle<Value> onet_compress (const Arguments &args) {
     size_t bytesOut = 0;
     size_t bytesBoundary = 0;
     int lastBlockPosition = 0;
+    int lastBlockValue = 0;
 
     int status = compress(dataIn, bytesIn, compressionLevel, &dataOut, &bytesOut);
 
@@ -242,7 +243,7 @@ static Handle<Value> onet_compress (const Arguments &args) {
         return Undefined();
     }
 
-    status = meta_uncompress(&dataOut, bytesOut, &dataBoundary, &bytesBoundary, &lastBlockPosition);
+    status = meta_uncompress(&dataOut, bytesOut, &dataBoundary, &bytesBoundary, &lastBlockPosition, &lastBlockValue);
 
     if (status != 0) {
         char msg[30];
@@ -271,6 +272,7 @@ static Handle<Value> onet_compress (const Arguments &args) {
     Local<Object> meta = Object::New();
     meta->Set(SYM_OFFSETS, dataOffsets);
     meta->Set(SYM_LENGTH, Integer::New(bytesIn));
+    meta->Set(SYM_LAST_VALUE, Integer::New(lastBlockValue));
     meta->Set(SYM_RAW_LENGTH, Integer::New(bytesOut - HEADER_SIZE - FOOTER_SIZE));
     meta->Set(SYM_CRC, crc->handle_);
 
@@ -481,6 +483,7 @@ extern "C" void init (Handle<Object> target) {
     SYM_LEFT = NODE_PSYMBOL("left");
     SYM_RIGHT = NODE_PSYMBOL("right");
     SYM_LAST_BLOCK = NODE_PSYMBOL("lastBlock");
+    SYM_LAST_VALUE = NODE_PSYMBOL("lastValue");
     SYM_TYPE = NODE_PSYMBOL("type");
     SYM_OFFSETS = NODE_PSYMBOL("offsets");
     SYM_LENGTH = NODE_PSYMBOL("length");
@@ -489,18 +492,13 @@ extern "C" void init (Handle<Object> target) {
     SYM_META = NODE_PSYMBOL("meta");
     SYM_BUFFERS = NODE_PSYMBOL("buffers");
     SYM_HEADER = NODE_PSYMBOL("header");
-    SYM_ODD = NODE_PSYMBOL("odd");
     tmpBody = (unsigned char *) malloc(CHUNK);
 
     char header[] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff};
     Buffer *headerBuffer = Buffer::New(header, 10);
 
-    char odd[] = {0x00, 0x00, 0xff, 0xff};
-    Buffer *oddBuffer = Buffer::New(odd, 4);
-
     Handle<Object> buffers = Object::New();
     buffers->Set(SYM_HEADER, headerBuffer->handle_);
-    buffers->Set(SYM_ODD, oddBuffer->handle_);
 
     target->Set(SYM_BUFFERS, buffers);
 
