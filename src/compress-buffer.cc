@@ -377,7 +377,7 @@ static Handle<Value> getCrc (const Arguments &args) {
 
         Local<Object> bufCrc = objCrc->ToObject();
 
-        if (!Buffer::Length(bufCrc) != 4) {
+        if (Buffer::Length(bufCrc) != 4) {
             char msg[40];
             sprintf(msg, "CRC32 buffer has invalid length: %d", i);
             ThrowNodeError(msg);
