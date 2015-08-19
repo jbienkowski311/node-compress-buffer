@@ -37,8 +37,7 @@ namespace node_compress_buffer {
     static Persistent<String> SYM_META;
     static Persistent<String> SYM_BUFFERS;
     static Persistent<String> SYM_HEADER;
-
-    static Handle<Function> buffer;
+    static Persistent<String> SYM_BUFFER;
 
     unsigned char *tmpBody;
 
@@ -47,6 +46,9 @@ namespace node_compress_buffer {
 
         Buffer *sb = Buffer::New(len);
         memcpy(Buffer::Data(sb), data, len);
+
+        Local<Object> global = Context::GetCurrent()->Global();
+        Local<Function> buffer = Local<Function>::Cast(global->Get(SYM_BUFFER));
 
         Handle<Value> args[3] = {
             sb->handle_,
@@ -516,9 +518,9 @@ namespace node_compress_buffer {
         SYM_META = NODE_PSYMBOL("meta");
         SYM_BUFFERS = NODE_PSYMBOL("buffers");
         SYM_HEADER = NODE_PSYMBOL("header");
-        tmpBody = (unsigned char *) malloc(CHUNK);
+        SYM_BUFFER = NODE_PSYMBOL("Buffer");
 
-        buffer = Handle<Function>::Cast(Context::GetCurrent()->Global()->Get(String::New("Buffer")));
+        tmpBody = (unsigned char *) malloc(CHUNK);
 
         char header[] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff};
 
