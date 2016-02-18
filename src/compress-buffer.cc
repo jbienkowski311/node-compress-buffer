@@ -352,7 +352,22 @@ namespace node_compress_buffer {
 
         for(; i < l; i++) {
             Local<Object> obj = arr->Get(i)->ToObject();
+
+            if (!obj->Has(SYM_META)) {
+                char msg[40];
+                sprintf(msg, "ESTIMATE wrong object (no meta key) at: %d", i);
+                ThrowNodeError(msg);
+                return scope.Close(Undefined());
+            }
+
             Local<Object> meta = obj->Get(SYM_META)->ToObject();
+
+            if (!meta->Has(SYM_RAW_LENGTH)) {
+                char msg[60];
+                sprintf(msg, "ESTIMATE wrong object (no rawLength key) at: %d", i);
+                ThrowNodeError(msg);
+                return scope.Close(Undefined());
+            }
 
             sum += meta->Get(SYM_RAW_LENGTH)->Uint32Value();
         }
@@ -384,14 +399,29 @@ namespace node_compress_buffer {
 
         for (; i < l; i++) {
             Local<Object> obj = arr->Get(i)->ToObject();
+
+            if (!obj->Has(SYM_META)) {
+                char msg[40];
+                sprintf(msg, "CRC32 wrong object (no meta key) at: %d", i);
+                ThrowNodeError(msg);
+                return scope.Close(Undefined());
+            }
+
             Local<Object> meta = obj->Get(SYM_META)->ToObject();
+
+            if (!meta->Has(SYM_CRC)) {
+                char msg[40];
+                sprintf(msg, "CRC32 wrong object (no crc key) at: %d", i);
+                ThrowNodeError(msg);
+                return scope.Close(Undefined());
+            }
 
             Local<Value> objCrc = meta->Get(SYM_CRC);
             if (!Buffer::HasInstance(objCrc)) {
                 char msg[40];
                 sprintf(msg, "CRC32 is not a buffer at: %d", i);
                 ThrowNodeError(msg);
-                return Undefined();
+                return scope.Close(Undefined());
             }
 
             Local<Object> bufCrc = objCrc->ToObject();
@@ -400,7 +430,7 @@ namespace node_compress_buffer {
                 char msg[40];
                 sprintf(msg, "CRC32 buffer has invalid length: %d", i);
                 ThrowNodeError(msg);
-                return Undefined();
+                return scope.Close(Undefined());
             }
 
             unsigned long tmpCrc = reverseBytes((unsigned char *) Buffer::Data(bufCrc));
