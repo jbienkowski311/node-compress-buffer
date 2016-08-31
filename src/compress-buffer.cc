@@ -41,6 +41,15 @@ namespace node_compress_buffer {
 
     unsigned char *tmpBody;
 
+    struct bufferData {
+        char *dataIn;
+        size_t bytesIn;
+        char *dataOut;
+        size_t bytesOut;
+        Persistent<Function> cb;
+        int compressionLevel;
+    };
+
     static Handle<Value> get_buffer (const char* data, size_t len) {
         HandleScope scope;
 
@@ -302,7 +311,7 @@ namespace node_compress_buffer {
         return scope.Close(result);
     }
 
-    static Handle<Value> compress (const Arguments& args) {
+    static Handle<Value> compressSync (const Arguments& args) {
         HandleScope scope;
 
         int compressionLevel = Z_DEFAULT_COMPRESSION;
@@ -340,6 +349,92 @@ namespace node_compress_buffer {
         free(dataOut);
 
         return scope.Close(b);
+    }
+
+
+    static int asyncCompress (eio_req *r) {
+        struct bufferData *data = (struct bufferData *) r->data;
+
+        r->result = compress(data->dataIn, data->bytesIn, data->compressionLevel, &data->dataOut, &data->bytesOut);
+
+        return 0;
+    }
+
+    static int afterAsync (eio_req *r) {
+        HandleScope scope;
+        Local<Value> argv[2];
+
+        ev_unref(EV_DEFAULT_UC);
+
+        struct bufferData *data = (struct bufferData *) r->data;
+
+        if (r->result != 0) {
+            argv[0] = Local<Value>::New(String::New("Unable to compress"));
+            argv[1] = Local<Value>::New(Number::New(r->result));
+        } else {
+            argv[0] = Local<Value>::New(Null());
+            argv[1] = Local<Value>::New(get_buffer(data->dataOut, data->bytesOut));
+        }
+
+        if (data->dataOut) {
+            free(data->dataOut);
+        }
+
+        TryCatch try_catch;
+
+        data->cb->Call(Context::GetCurrent()->Global(), 2, argv);
+
+        if (try_catch.HasCaught()) {
+            FatalException(try_catch);
+        }
+
+        data->cb.Dispose();
+        free(data);
+
+        return 0;
+    }
+
+    static Handle<Value> compress (const Arguments& args) {
+        HandleScope scope;
+
+        int compressionLevel = Z_DEFAULT_COMPRESSION;
+        Local<Function> cb;
+
+        if (args.Length() < 2) {
+            return Undefined();
+        }
+
+        if (!Buffer::HasInstance(args[0])) {
+            ThrowNodeError("First argument must be a Buffer");
+            return Undefined();
+        }
+
+        if ((args.Length() == 2 && !args[1]->IsFunction()) || (args.Length() == 3 && !args[2]->IsFunction())) {
+            ThrowNodeError("Second argument must be a callback");
+            return Undefined();
+        }
+
+        if (args[1]->IsNumber()) {
+            compressionLevel = args[1]->IntegerValue();
+        }
+
+        Local<Object> bufferIn = args[0]->ToObject();
+
+        cb = Local<Function>::Cast(args[args.Length() - 1]);
+
+        struct bufferData *data = (struct bufferData *) malloc(sizeof(struct bufferData));
+        memset(data, '\0', sizeof(struct bufferData));
+        data->dataIn = Buffer::Data(bufferIn);
+        data->bytesIn = Buffer::Length(bufferIn);
+        data->dataOut = 0;
+        data->bytesOut = 0;
+        data->cb = Persistent<Function>::New(cb);
+        data->compressionLevel = compressionLevel;
+
+        eio_custom(asyncCompress, EIO_PRI_DEFAULT, afterAsync, data);
+        ev_ref(EV_DEFAULT_UC);
+
+        return scope.Close(Undefined());
     }
 
     static Handle<Value> estimate (const Arguments &args) {
@@ -559,8 +654,10 @@ namespace node_compress_buffer {
 
         target->Set(SYM_BUFFERS, buffers);
 
+        NODE_SET_METHOD(target, "compressSync", compressSync);
         NODE_SET_METHOD(target, "compress", compress);
-        NODE_SET_METHOD(target, "uncompress", uncompress);
+        NODE_SET_METHOD(target, "uncompress", uncompressSync);
+        NODE_SET_METHOD(target, "uncompressSync", uncompress);
         NODE_SET_METHOD(target, "metaCompress", onet_compress);
         NODE_SET_METHOD(target, "getCrc", getCrc);
         NODE_SET_METHOD(target, "estimate", estimate);
