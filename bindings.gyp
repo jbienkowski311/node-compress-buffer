@@ -7,7 +7,10 @@
 				'libraries': [
 				'-lz'
 				]
-			}
+			},
+            "include_dirs": [
+                "<!(node -e \"require('nan')\")"
+            ],
 		}
 	]
 }
