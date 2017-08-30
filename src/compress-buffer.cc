@@ -157,7 +157,7 @@ namespace node_compress_buffer {
         return 0;
     }
 
-    static int compress (char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
+    static int compress (const char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
         size_t bytesDeflated = 0;
 
         if (compressionLevel < 0 || compressionLevel > 9) {
@@ -169,8 +169,9 @@ namespace node_compress_buffer {
         strmCompress.zfree = Z_NULL;
         strmCompress.opaque = Z_NULL;
 
-        if (deflateInit2(&strmCompress, compressionLevel, Z_DEFLATED, WBITS, 8L, Z_DEFAULT_STRATEGY) != Z_OK) {
-            return -1;
+        int deflateInitResult = deflateInit2(&strmCompress, compressionLevel, Z_DEFLATED, WBITS, 8L, Z_DEFAULT_STRATEGY);
+        if (deflateInitResult != Z_OK) {
+            return deflateInitResult;
         }
 
         bytesDeflated = deflateBound(&strmCompress, bytesIn);
@@ -186,9 +187,10 @@ namespace node_compress_buffer {
         strmCompress.next_out = (Bytef *) *dataOut;
         strmCompress.avail_out = bytesDeflated;
 
-        if (deflate(&strmCompress, Z_NO_FLUSH) < Z_OK) {
+        int deflateResult = deflate(&strmCompress, bytesIn ? Z_NO_FLUSH : Z_FINISH);
+        if (deflateResult < Z_OK) {
             deflateEnd(&strmCompress);
-            return -2;
+            return deflateResult;
         }
 
         deflate(&strmCompress, Z_FINISH);
@@ -215,15 +217,16 @@ namespace node_compress_buffer {
             return;
         }
 
-        v8::Local<v8::Object> bufferIn = info[0]->ToObject();
+        v8::Local<v8::Value> bufferIn = info[0];
 
         if (info.Length() > 1) {
             compressionLevel = info[1]->IntegerValue();
         }
 
-        char *dataIn = node::Buffer::Data(bufferIn);
         size_t bytesIn = node::Buffer::Length(bufferIn);
-        char *dataOut = 0;
+        const char *dataIn = node::Buffer::Data(bufferIn);
+
+        char *dataOut;
         char *dataBoundary = (char *) malloc(SPACER_SIZE);
         size_t bytesOut = 0;
         size_t bytesBoundary = 0;
@@ -301,11 +304,12 @@ namespace node_compress_buffer {
             compressionLevel = info[1]->IntegerValue();
         }
 
-        char *dataIn = node::Buffer::Data(bufferIn);
+        const char *dataIn = node::Buffer::Data(bufferIn);
         size_t bytesIn = node::Buffer::Length(bufferIn);
         char *dataOut = 0;
         size_t bytesOut = 0;
         int status = compress(dataIn, bytesIn, compressionLevel, &dataOut, &bytesOut);
+        /* int status = compress2(reinterpret_cast<Bytef*>(dataOut), &bytesOut, reinterpret_cast<const Bytef*>(dataIn), bytesIn, compressionLevel); */
 
         if (status != 0) {
             if (dataOut) {
