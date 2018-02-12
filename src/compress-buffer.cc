@@ -3,6 +3,7 @@
 #include <string.h>
 #include <v8.h>
 #include <math.h>
+#include <nan.h>
 #include <stdlib.h>
 #include <assert.h>
 #ifdef __APPLE__
@@ -19,51 +20,27 @@
 #define FOOTER_SIZE 8
 #define SPACER_SIZE 6
 
-namespace node_compress_buffer {
-    using namespace v8;
-    using namespace node;
+#define LOCAL_STR(name) Nan::New<v8::String>(name).ToLocalChecked()
 
-    static Persistent<String> SYM_BODY;
-    static Persistent<String> SYM_BOUNDARY;
-    static Persistent<String> SYM_LEFT;
-    static Persistent<String> SYM_RIGHT;
-    static Persistent<String> SYM_LAST_BLOCK;
-    static Persistent<String> SYM_LAST_VALUE;
-    static Persistent<String> SYM_TYPE;
-    static Persistent<String> SYM_OFFSETS;
-    static Persistent<String> SYM_LENGTH;
-    static Persistent<String> SYM_RAW_LENGTH;
-    static Persistent<String> SYM_CRC;
-    static Persistent<String> SYM_META;
-    static Persistent<String> SYM_BUFFERS;
-    static Persistent<String> SYM_HEADER;
-    static Persistent<String> SYM_BUFFER;
+namespace node_compress_buffer {
+
+    static Nan::Persistent<v8::String> SYM_BODY(LOCAL_STR("body"));
+    static Nan::Persistent<v8::String> SYM_BOUNDARY(LOCAL_STR("boundary"));
+    static Nan::Persistent<v8::String> SYM_LEFT(LOCAL_STR("left"));
+    static Nan::Persistent<v8::String> SYM_RIGHT(LOCAL_STR("right"));
+    static Nan::Persistent<v8::String> SYM_LAST_BLOCK(LOCAL_STR("lastBlock"));
+    static Nan::Persistent<v8::String> SYM_LAST_VALUE(LOCAL_STR("lastValue"));
+    static Nan::Persistent<v8::String> SYM_TYPE(LOCAL_STR("type"));
+    static Nan::Persistent<v8::String> SYM_OFFSETS(LOCAL_STR("offsets"));
+    static Nan::Persistent<v8::String> SYM_LENGTH(LOCAL_STR("length"));
+    static Nan::Persistent<v8::String> SYM_RAW_LENGTH(LOCAL_STR("rawLength"));
+    static Nan::Persistent<v8::String> SYM_CRC(LOCAL_STR("crc"));
+    static Nan::Persistent<v8::String> SYM_META(LOCAL_STR("meta"));
+    static Nan::Persistent<v8::String> SYM_BUFFERS(LOCAL_STR("buffers"));
+    static Nan::Persistent<v8::String> SYM_HEADER(LOCAL_STR("header"));
+    static Nan::Persistent<v8::String> SYM_BUFFER(LOCAL_STR("Buffer"));
 
     unsigned char *tmpBody;
-
-    static Handle<Value> get_buffer (const char* data, size_t len) {
-        HandleScope scope;
-
-        Buffer *sb = Buffer::New(len);
-        memcpy(Buffer::Data(sb), data, len);
-
-        Local<Object> global = Context::GetCurrent()->Global();
-        Local<Function> buffer = Local<Function>::Cast(global->Get(SYM_BUFFER));
-
-        Handle<Value> args[3] = {
-            sb->handle_,
-            Integer::New(len),
-            Integer::New(0)
-        };
-
-        Local<Object> b = buffer->NewInstance(3, args);
-
-        return scope.Close(b);
-    }
-
-    static Handle<Value> ThrowNodeError (const char* what = NULL) {
-        return ThrowException(Exception::Error(String::New(what)));
-    }
 
     static int meta_uncompress (char **dataIn, size_t bytesIn, char **dataBoundary, size_t *bytesBoundary, int *lastBlockPosition, int *lastBlockValue) {
         int last;
@@ -180,7 +157,7 @@ namespace node_compress_buffer {
         return 0;
     }
 
-    static int compress (char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
+    static int compress (const char *dataIn, size_t bytesIn, int compressionLevel, char **dataOut, size_t *bytesOut) {
         size_t bytesDeflated = 0;
 
         if (compressionLevel < 0 || compressionLevel > 9) {
@@ -192,8 +169,9 @@ namespace node_compress_buffer {
         strmCompress.zfree = Z_NULL;
         strmCompress.opaque = Z_NULL;
 
-        if (deflateInit2(&strmCompress, compressionLevel, Z_DEFLATED, WBITS, 8L, Z_DEFAULT_STRATEGY) != Z_OK) {
-            return -1;
+        int deflateInitResult = deflateInit2(&strmCompress, compressionLevel, Z_DEFLATED, WBITS, 8L, Z_DEFAULT_STRATEGY);
+        if (deflateInitResult != Z_OK) {
+            return deflateInitResult;
         }
 
         bytesDeflated = deflateBound(&strmCompress, bytesIn);
@@ -209,9 +187,10 @@ namespace node_compress_buffer {
         strmCompress.next_out = (Bytef *) *dataOut;
         strmCompress.avail_out = bytesDeflated;
 
-        if (deflate(&strmCompress, Z_NO_FLUSH) < Z_OK) {
+        int deflateResult = deflate(&strmCompress, bytesIn ? Z_NO_FLUSH : Z_FINISH);
+        if (deflateResult < Z_OK) {
             deflateEnd(&strmCompress);
-            return -2;
+            return deflateResult;
         }
 
         deflate(&strmCompress, Z_FINISH);
@@ -223,29 +202,31 @@ namespace node_compress_buffer {
         return 0;
     }
 
-    static Handle<Value> onet_compress (const Arguments &args) {
-        HandleScope scope;
+    NAN_METHOD(onet_compress) {
 
         int compressionLevel = Z_DEFAULT_COMPRESSION;
 
-        if (args.Length() < 1) {
-            return Undefined();
+        if (info.Length() < 1) {
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
-        if (!Buffer::HasInstance(args[0])) {
-            ThrowNodeError("First argument must be a Buffer");
-            return Undefined();
+        if (!node::Buffer::HasInstance(info[0])) {
+            Nan::ThrowError("First argument must be a Buffer");
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
-        Local<Object> bufferIn = args[0]->ToObject();
+        v8::Local<v8::Value> bufferIn = info[0];
 
-        if (args.Length() > 1) {
-            compressionLevel = args[1]->IntegerValue();
+        if (info.Length() > 1) {
+            compressionLevel = info[1]->IntegerValue();
         }
 
-        char *dataIn = Buffer::Data(bufferIn);
-        size_t bytesIn = Buffer::Length(bufferIn);
-        char *dataOut = 0;
+        size_t bytesIn = node::Buffer::Length(bufferIn);
+        const char *dataIn = node::Buffer::Data(bufferIn);
+
+        char *dataOut;
         char *dataBoundary = (char *) malloc(SPACER_SIZE);
         size_t bytesOut = 0;
         size_t bytesBoundary = 0;
@@ -261,8 +242,8 @@ namespace node_compress_buffer {
 
             char msg[30];
             sprintf(msg, "Unable to compress: %d", status);
-            ThrowNodeError(msg);
-            return Undefined();
+            Nan::ThrowError(msg);
+            return;
         }
 
         status = meta_uncompress(&dataOut, bytesOut, &dataBoundary, &bytesBoundary, &lastBlockPosition, &lastBlockValue);
@@ -270,109 +251,111 @@ namespace node_compress_buffer {
         if (status != 0) {
             char msg[30];
             sprintf(msg, "Unable to uncompress: %d", status);
-            ThrowNodeError(msg);
-            return Undefined();
+            Nan::ThrowError(msg);
+            return;
         }
 
         unsigned int dataLength = bytesOut - HEADER_SIZE - FOOTER_SIZE - 1;
 
-        Local<Object> result = Object::New();
+        v8::Local<v8::Object> result = Nan::New<v8::Object>();
 
-        result->Set(SYM_BODY, get_buffer(dataOut, bytesOut));
+        result->Set(Nan::New(SYM_BODY), Nan::CopyBuffer(dataOut, bytesOut).ToLocalChecked());
 
-        result->Set(SYM_BOUNDARY, get_buffer(dataBoundary, bytesBoundary));
+        result->Set(Nan::New(SYM_BOUNDARY), Nan::CopyBuffer(dataBoundary, bytesBoundary).ToLocalChecked());
 
-        Local<Object> dataOffsets = Object::New();
-        dataOffsets->Set(SYM_LEFT, Integer::New(HEADER_SIZE));
-        dataOffsets->Set(SYM_RIGHT, Integer::New(HEADER_SIZE + dataLength));
-        dataOffsets->Set(SYM_LAST_BLOCK, Integer::New(lastBlockPosition));
+        v8::Local<v8::Object> dataOffsets = Nan::New<v8::Object>();
+        dataOffsets->Set(Nan::New(SYM_LEFT), Nan::New<v8::Integer>(HEADER_SIZE));
+        dataOffsets->Set(Nan::New(SYM_RIGHT), Nan::New<v8::Integer>(HEADER_SIZE + dataLength));
+        dataOffsets->Set(Nan::New(SYM_LAST_BLOCK), Nan::New<v8::Integer>(lastBlockPosition));
 
-        Local<Object> meta = Object::New();
-        meta->Set(SYM_OFFSETS, dataOffsets);
-        meta->Set(SYM_LENGTH, Integer::New(bytesIn));
-        meta->Set(SYM_LAST_VALUE, Integer::New(lastBlockValue));
-        meta->Set(SYM_RAW_LENGTH, Integer::New(bytesOut - HEADER_SIZE - FOOTER_SIZE));
-        meta->Set(SYM_CRC, get_buffer(dataOut + (bytesOut - FOOTER_SIZE), 4));
+        v8::Local<v8::Object> meta = Nan::New<v8::Object>();
+        meta->Set(Nan::New(SYM_OFFSETS), dataOffsets);
+        meta->Set(Nan::New(SYM_LENGTH), Nan::New<v8::Integer>(static_cast<uint32_t>(bytesIn)));
+        meta->Set(Nan::New(SYM_LAST_VALUE), Nan::New<v8::Integer>(lastBlockValue));
+        meta->Set(Nan::New(SYM_RAW_LENGTH), Nan::New<v8::Integer>(static_cast<uint32_t>(bytesOut - HEADER_SIZE - FOOTER_SIZE)));
+        meta->Set(Nan::New(SYM_CRC), Nan::CopyBuffer(dataOut + (bytesOut - FOOTER_SIZE), 4).ToLocalChecked());
 
-        result->Set(SYM_META, meta);
+        result->Set(Nan::New(SYM_META), meta);
 
         free(dataOut);
         free(dataBoundary);
 
-        return scope.Close(result);
+        info.GetReturnValue().Set(result);
     }
 
-    static Handle<Value> compress (const Arguments& args) {
-        HandleScope scope;
+    static NAN_METHOD(compress) {
 
         int compressionLevel = Z_DEFAULT_COMPRESSION;
 
-        if (args.Length() < 1) {
-            return Undefined();
+        if (info.Length() < 1) {
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
-        if (!Buffer::HasInstance(args[0])) {
-            ThrowNodeError("First argument must be a Buffer");
-            return Undefined();
+        if (!node::Buffer::HasInstance(info[0])) {
+            Nan::ThrowError("First argument must be a Buffer");
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
-        Local<Object> bufferIn = args[0]->ToObject();
+        v8::Local<v8::Object> bufferIn = info[0]->ToObject();
 
-        if (args.Length() > 1) {
-            compressionLevel = args[1]->IntegerValue();
+        if (info.Length() > 1) {
+            compressionLevel = info[1]->IntegerValue();
         }
 
-        char *dataIn = Buffer::Data(bufferIn);
-        size_t bytesIn = Buffer::Length(bufferIn);
+        const char *dataIn = node::Buffer::Data(bufferIn);
+        size_t bytesIn = node::Buffer::Length(bufferIn);
         char *dataOut = 0;
         size_t bytesOut = 0;
         int status = compress(dataIn, bytesIn, compressionLevel, &dataOut, &bytesOut);
+        /* int status = compress2(reinterpret_cast<Bytef*>(dataOut), &bytesOut, reinterpret_cast<const Bytef*>(dataIn), bytesIn, compressionLevel); */
 
         if (status != 0) {
             if (dataOut) {
                 free(dataOut);
             }
-            ThrowNodeError("Unable to compress");
-            return Undefined();
+            Nan::ThrowError("Unable to compress");
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
-        Handle<Value> b = get_buffer(dataOut, bytesOut);
+        v8::Handle<v8::Value> b = Nan::CopyBuffer(dataOut, bytesOut).ToLocalChecked();
         free(dataOut);
-
-        return scope.Close(b);
+        info.GetReturnValue().Set(b);
     }
 
-    static Handle<Value> estimate (const Arguments &args) {
-        HandleScope scope;
-
-        Local<Array> arr = Local<Array>::Cast(args[0]);
+    static NAN_METHOD(estimate) {
+        v8::Local<v8::Array> arr = v8::Local<v8::Array>::Cast(info[0]);
         int i = 0;
         int l = arr->Length();
         int sum = HEADER_SIZE + FOOTER_SIZE + ((l - 1) * SPACER_SIZE);
 
         for(; i < l; i++) {
-            Local<Object> obj = arr->Get(i)->ToObject();
+            v8::Local<v8::Object> obj = arr->Get(i)->ToObject();
 
-            if (!obj->Has(SYM_META)) {
+            if (!obj->Has(Nan::New(SYM_META))) {
                 char msg[40];
                 sprintf(msg, "ESTIMATE wrong object (no meta key) at: %d", i);
-                ThrowNodeError(msg);
-                return scope.Close(Undefined());
+                Nan::ThrowError(msg);
+                info.GetReturnValue().Set(Nan::Undefined());
+                return;
             }
 
-            Local<Object> meta = obj->Get(SYM_META)->ToObject();
+            v8::Local<v8::Object> meta = obj->Get(Nan::New(SYM_META))->ToObject();
 
-            if (!meta->Has(SYM_RAW_LENGTH)) {
+            if (!meta->Has(Nan::New(SYM_RAW_LENGTH))) {
                 char msg[60];
                 sprintf(msg, "ESTIMATE wrong object (no rawLength key) at: %d", i);
-                ThrowNodeError(msg);
-                return scope.Close(Undefined());
+                Nan::ThrowError(msg);
+                info.GetReturnValue().Set(Nan::Undefined());
+                return;
             }
 
-            sum += meta->Get(SYM_RAW_LENGTH)->Uint32Value();
+            sum += meta->Get(Nan::New(SYM_RAW_LENGTH))->Uint32Value();
         }
 
-        return scope.Close(Integer::New(sum));
+        info.GetReturnValue().Set(Nan::New<v8::Integer>(sum));
     }
 
     static unsigned long reverseBytes (unsigned char *buf) {
@@ -386,77 +369,81 @@ namespace node_compress_buffer {
         return v;
     }
 
-    static Handle<Value> getCrc (const Arguments &args) {
-        HandleScope scope;
+    static NAN_METHOD(getCrc) {
 
         unsigned long crc = crc32(0L, Z_NULL, 0);
         unsigned long tot = 0;
 
-        Local<Array> arr = Local<Array>::Cast(args[0]);
+        v8::Local<v8::Array> arr = v8::Local<v8::Array>::Cast(info[0]);
 
         int l = arr->Length();
         int i = 0;
 
         for (; i < l; i++) {
-            Local<Object> obj = arr->Get(i)->ToObject();
+            v8::Local<v8::Object> obj = arr->Get(i)->ToObject();
 
-            if (!obj->Has(SYM_META)) {
+            if (!obj->Has(Nan::New(SYM_META))) {
                 char msg[40];
                 sprintf(msg, "CRC32 wrong object (no meta key) at: %d", i);
-                ThrowNodeError(msg);
-                return scope.Close(Undefined());
+                Nan::ThrowError(msg);
+                info.GetReturnValue().Set(Nan::Undefined());
+                return;
             }
 
-            Local<Object> meta = obj->Get(SYM_META)->ToObject();
+            v8::Local<v8::Object> meta = obj->Get(Nan::New(SYM_META))->ToObject();
 
-            if (!meta->Has(SYM_CRC)) {
+            if (!meta->Has(Nan::New(SYM_CRC))) {
                 char msg[40];
                 sprintf(msg, "CRC32 wrong object (no crc key) at: %d", i);
-                ThrowNodeError(msg);
-                return scope.Close(Undefined());
+                Nan::ThrowError(msg);
+                info.GetReturnValue().Set(Nan::Undefined());
+                return;
             }
 
-            Local<Value> objCrc = meta->Get(SYM_CRC);
-            if (!Buffer::HasInstance(objCrc)) {
+            v8::Local<v8::Value> objCrc = meta->Get(Nan::New(SYM_CRC));
+            if (!node::Buffer::HasInstance(objCrc)) {
                 char msg[40];
                 sprintf(msg, "CRC32 is not a buffer at: %d", i);
-                ThrowNodeError(msg);
-                return scope.Close(Undefined());
+                Nan::ThrowError(msg);
+                info.GetReturnValue().Set(Nan::Undefined());
+                return;
             }
 
-            Local<Object> bufCrc = objCrc->ToObject();
+            v8::Local<v8::Object> bufCrc = objCrc->ToObject();
 
-            if (Buffer::Length(bufCrc) != 4) {
+            if (node::Buffer::Length(bufCrc) != 4) {
                 char msg[40];
                 sprintf(msg, "CRC32 buffer has invalid length: %d", i);
-                ThrowNodeError(msg);
-                return scope.Close(Undefined());
+                Nan::ThrowError(msg);
+                info.GetReturnValue().Set(Nan::Undefined());
+                return;
             }
 
-            unsigned long tmpCrc = reverseBytes((unsigned char *) Buffer::Data(bufCrc));
-            unsigned long tmpLen = meta->Get(SYM_LENGTH)->Uint32Value();
+            unsigned long tmpCrc = reverseBytes((unsigned char *) node::Buffer::Data(bufCrc));
+            unsigned long tmpLen = meta->Get(Nan::New(SYM_LENGTH))->Uint32Value();
 
             crc = crc32_combine(crc, tmpCrc, tmpLen);
             tot += tmpLen;
         }
 
-        Local<Object> data = Object::New();
-        data->Set(SYM_CRC, get_buffer((char *) &crc, 4));
-        data->Set(SYM_LENGTH, get_buffer((char *) &tot, 4));
+        v8::Local<v8::Object> data = Nan::New<v8::Object>();
+        data->Set(Nan::New(SYM_CRC), Nan::CopyBuffer((char *) &crc, 4).ToLocalChecked());
+        data->Set(Nan::New(SYM_LENGTH), Nan::CopyBuffer((char *) &tot, 4).ToLocalChecked());
 
-        return scope.Close(data);
+        info.GetReturnValue().Set(data);
     }
 
-    static Handle<Value> uncompress (const Arguments &args) {
-        HandleScope scope;
+    NAN_METHOD(uncompress) {
 
-        if (args.Length() < 1) {
-            return Undefined();
+        if (info.Length() < 1) {
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
-        if (!Buffer::HasInstance(args[0])) {
-            ThrowNodeError("First argument must be a Buffer");
-            return Undefined();
+        if (!node::Buffer::HasInstance(info[0])) {
+            Nan::ThrowError("First argument must be a Buffer");
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
         z_stream strmUncompress;
@@ -470,14 +457,15 @@ namespace node_compress_buffer {
         int rci = inflateInit2(&strmUncompress, WBITS);
 
         if (rci != Z_OK) {
-            ThrowNodeError("zlib initialization error.");
-            return Undefined();
+            Nan::ThrowError("zlib initialization error.");
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
-        Local<Object> bufferIn=args[0]->ToObject();
+        v8::Local<v8::Object> bufferIn = info[0]->ToObject();
 
-        strmUncompress.next_in = (Bytef*) Buffer::Data(bufferIn);
-        strmUncompress.avail_in = Buffer::Length(bufferIn);
+        strmUncompress.next_in = (Bytef*) node::Buffer::Data(bufferIn);
+        strmUncompress.avail_in = node::Buffer::Length(bufferIn);
 
         Bytef  *bufferOut = NULL;
         uint32_t malloc_size=0;
@@ -504,7 +492,8 @@ namespace node_compress_buffer {
                     if (tmp!=NULL) {
                         free(tmp);
                     }
-                    return Undefined();
+                    info.GetReturnValue().Set(Nan::Undefined());
+                    return;
             }
 
             uint32_t have = CHUNK - strmUncompress.avail_out;
@@ -524,46 +513,31 @@ namespace node_compress_buffer {
             if (bufferOut!=NULL) {
                 free(bufferOut);
             }
-            return Undefined();
+            info.GetReturnValue().Set(Nan::Undefined());
+            return;
         }
 
-        Handle<Value> b = get_buffer((char *)bufferOut, malloc_size);
+        v8::Handle<v8::Value> b = Nan::CopyBuffer((char *)bufferOut, malloc_size).ToLocalChecked();
         free(bufferOut);
-
-        return scope.Close(b);
+        info.GetReturnValue().Set(b);
     }
 
-    extern "C" void init (Handle<Object> target) {
-        SYM_BODY = NODE_PSYMBOL("body");
-        SYM_BOUNDARY = NODE_PSYMBOL("boundary");
-        SYM_LEFT = NODE_PSYMBOL("left");
-        SYM_RIGHT = NODE_PSYMBOL("right");
-        SYM_LAST_BLOCK = NODE_PSYMBOL("lastBlock");
-        SYM_LAST_VALUE = NODE_PSYMBOL("lastValue");
-        SYM_TYPE = NODE_PSYMBOL("type");
-        SYM_OFFSETS = NODE_PSYMBOL("offsets");
-        SYM_LENGTH = NODE_PSYMBOL("length");
-        SYM_RAW_LENGTH = NODE_PSYMBOL("rawLength");
-        SYM_CRC = NODE_PSYMBOL("crc");
-        SYM_META = NODE_PSYMBOL("meta");
-        SYM_BUFFERS = NODE_PSYMBOL("buffers");
-        SYM_HEADER = NODE_PSYMBOL("header");
-        SYM_BUFFER = NODE_PSYMBOL("Buffer");
+    void init(v8::Handle<v8::Object> target) {
 
         tmpBody = (unsigned char *) malloc(CHUNK);
 
-        char header[] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff};
+        const unsigned char header[] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff};
 
-        Handle<Object> buffers = Object::New();
-        buffers->Set(SYM_HEADER, get_buffer(header, 10));
+        v8::Handle<v8::Object> buffers = Nan::New<v8::Object>();
+        buffers->Set(Nan::New(SYM_HEADER), Nan::CopyBuffer(reinterpret_cast<const char*>(header), 10).ToLocalChecked());
 
-        target->Set(SYM_BUFFERS, buffers);
+        target->Set(Nan::New(SYM_BUFFERS), buffers);
 
-        NODE_SET_METHOD(target, "compress", compress);
-        NODE_SET_METHOD(target, "uncompress", uncompress);
-        NODE_SET_METHOD(target, "metaCompress", onet_compress);
-        NODE_SET_METHOD(target, "getCrc", getCrc);
-        NODE_SET_METHOD(target, "estimate", estimate);
+        Nan::SetMethod(target, "compress", compress);
+        Nan::SetMethod(target, "uncompress", uncompress);
+        Nan::SetMethod(target, "metaCompress", onet_compress);
+        Nan::SetMethod(target, "getCrc", getCrc);
+        Nan::SetMethod(target, "estimate", estimate);
     }
 
 }

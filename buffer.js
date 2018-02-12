@@ -1,4 +1,4 @@
-var compress_buffer = require("compress-buffer-crc32");
+var compress_buffer = require("./index.js");
 var crc_utils = require("crc-utils2");
 
 var a = compress_buffer.compress(new Buffer("a"), -1);
