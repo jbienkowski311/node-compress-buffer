@@ -3,6 +3,9 @@ fs = require('fs');
 crypto=require('crypto');
 compress = require('../index').compress;
 uncompress = require('../index').uncompress;
+getCrc = require('../index').getCrc;
+metaCompress = require('../index').metaCompress;
+estimate = require('../index').estimate;
 
 function md5(data) {
 	var md5=crypto.createHash('md5');
@@ -77,4 +80,26 @@ exports['errors']= function(test) {
 	test.ok(nothing==null);
 	
 	test.done();
+}
+
+exports['crc32']= function(test) {
+	var crc = getCrc(compress(new Buffer(loremIpsum)));
+    console.log('??', crc.crc.toString(), 'yyy', crc.length.toString());
+    test.done();
+}
+
+exports['metaCompress']= function(test) {
+    var buf = new Buffer(loremIpsum);
+    var compressed = compress(buf);
+    var metaCompressed = metaCompress(buf);
+    console.log(compressed.toString(), compressed);
+    console.log(metaCompressed.body.toString(), metaCompressed);
+    test.done();
+}
+
+exports['estimate']= function(test) {
+    var buf = new Buffer(loremIpsum);
+    var res = estimate(buf);
+    console.log(res);
+    test.done();
 }

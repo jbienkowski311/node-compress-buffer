@@ -1,15 +1,17 @@
 {
   "name": "compress-buffer-crc32",
   "description": "Synchronous Buffer compression library for Node.js",
-  "homepage" : "http://egorfine.github.com/node-compress-buffer",
-  "bugs" : { "url" : "http://github.com/egorFiNE/node-compress-buffer/issues" },
+  "homepage": "http://egorfine.github.com/node-compress-buffer",
+  "bugs": {
+    "url": "http://github.com/egorFiNE/node-compress-buffer/issues"
+  },
   "version": "2.0.1",
   "author": "Egor Egorov",
   "repository": {
     "type": "git",
     "url": "http://github.com/egorfine/node-compress-buffer.git"
   },
-  "main" : "./index",
+  "main": "./index",
   "devDependencies": {
     "nodeunit": ">=0.5.4"
   },
